@@ -1,0 +1,144 @@
+// Alan's Check For Rebase Plugin
+buildscript {
+	repositories {
+		maven {
+			url "${project.ext."NEXUS_URL"}/repository/maven-releases"
+		}
+	}
+	dependencies {
+		classpath 'com.cognizant.cde:gitlab-merge-gradle-plugin:1.0.0'
+	}
+}
+ 
+plugins {
+            id 'org.springframework.boot' version '2.3.3.RELEASE'
+            id 'io.spring.dependency-management' version '1.0.10.RELEASE'
+            id 'java'
+
+	// Docker
+	id 'com.bmuschko.docker-remote-api' version '6.4.0'
+
+	// Sonar Qube
+	id 'jacoco'
+	id "org.sonarqube" version "2.8"
+        }
+// This will show as red sometimes. It's okay.
+import com.bmuschko.gradle.docker.tasks.image.*
+
+apply plugin: com.cognizant.cde.GitlabMergeVerificationPlugin
+
+
+group = 'com'
+version = '0.0.1-SNAPSHOT'
+sourceCompatibility = '1.8'
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    set('springCloudVersion', "Hoxton.SR8")
+}
+
+dependencies {
+    // This is a mvn bom to make sure if we have any spring cloud dependencies, choose the ones that work with each other.
+    implementation platform("org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}")
+
+    implementation 'org.springframework.data:spring-data-rest-hal-browser'
+    implementation 'com.oracle.ojdbc:ojdbc8'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-data-rest'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.cloud:spring-cloud-starter-config'
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+    testImplementation('org.springframework.boot:spring-boot-starter-test') {
+        exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
+    }
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
+}
+
+// To add SNAPSHOT to your builds if the env is dev.
+if(project.getProperty('ENV') == "DEV") {
+	version += '-SNAPSHOT'
+}
+
+// More of Alan's Plugin to get it working.
+verifyMergeRequest {
+	gitlabUrl = GITLAB_URL
+	gitlabApiToken = API_TOKEN
+	gitlabProjectId = PROJECT_ID
+	gitlabMergeId = MERGE_ID
+}
+
+// Creating a gradlew test command. We do not want to include testing any IT for this.
+test {
+	exclude '**/*IT.class'
+	useJUnitPlatform()
+}
+
+// Creating a gradlew integrationTest command. We do not want to include testing any unit tests for this.
+task integrationTest(type: Test) {
+	exclude '**/*Test.class'
+	useJUnitPlatform()
+}
+
+// Configuring SonarQube properties.
+sonarqube {
+	properties {
+		property "sonar.projectName", project.getProperty('AppName')
+		property "sonar.host.url", SONAR_URL
+		// Sonar Coverage Exclusions excludes your files from the coverage.
+		// Change it so your main application file is not included. I added the model folder as an example.
+		property "sonar.coverage.exclusions", "**/KPUserCrudApplication*, **/model/**"
+		// Sonar Exclusions makes it so your files don't exist at all to SonarQube. It's great for models as you will get a "Implement DTO or Simple POJO" error if you don't.
+		// I added model folder for example sake.
+		property "sonar.exclusions", "**/model/**"
+	}
+}
+
+// Turn on jacoco xml report generation. Sonar 2.8+ uses xml jacoco reports for the quality assurance check
+jacocoTestReport {
+	reports {
+		xml.enabled true
+	}
+}
+
+docker {
+	registryCredentials {
+		url = project.getProperty('DOCKER_URL')
+		username = project.getProperty('DOCKER_USERNAME')
+		password = project.getProperty('DOCKER_PASSWORD')
+		email = project.getProperty('DOCKER_EMAIL')
+	}
+}
+
+task copyJar(type: Copy) {
+	dependsOn bootJar
+	from 'build/libs'
+	into 'build/docker'
+}
+
+task createDockerfile(type: Dockerfile, dependsOn: copyJar) {
+	from 'openjdk:8'
+	copyFile(rootProject.name + "-0.0.1-SNAPSHOT.jar", '/app/' + rootProject.name + '-0.0.1-SNAPSHOT.jar')
+	entryPoint('java')
+	defaultCommand('-jar', '/app/' + rootProject.name + '-0.0.1-SNAPSHOT.jar')
+}
+
+task buildImage(type: DockerBuildImage, dependsOn: createDockerfile) {
+	images.add(project.getProperty('DOCKER_ORG') + '/' + project.getProperty('DOCKER_PROJECT_NAME')+ ':latest')
+}
+
+task pushImage(type: DockerPushImage, dependsOn: buildImage) {
+	images = buildImage.images
+}
+
+
+

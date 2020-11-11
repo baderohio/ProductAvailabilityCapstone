@@ -1,0 +1,33 @@
+spring:
+ application:
+  name: ProductMicroservice
+
+---
+# Anything that goes here is made specifically for clouds's profile.
+spring:
+  profiles: local, default
+server:
+  port: 8000
+
+eureka: 
+  client:
+   service-url:
+      default-zone: http://localhost:8761/eureka
+
+spring: 
+ datasource: 
+        url: jdbc:oracle:thin:@//localhost:1521/xe
+   username: productdb
+   password: p4ssw0rd
+
+---
+# Anything that goes here is made specifically for dev's profile.
+spring:
+  profiles: dev
+
+---
+# Anything that goes here is made specifically for clouds's profile.
+# Cloud is the default profile that Google Clound Foundry makes your application use if you do not override it.
+spring:
+  profiles: cloud
+

@@ -1,0 +1,215 @@
+updateGitlabCommitStatus state: 'pending'
+
+pipeline {
+    // Makes our pipeline run on any node
+    agent any
+
+    options {
+        gitLabConnection('gitlab')
+    }
+
+    environment {
+        ENV_DOCKER = credentials('dockerhub')
+    }
+
+    stages {
+        // Verify that the feature branch is not behind develop
+        stage('check-for-rebase-before') {
+            when {
+                expression {
+                    return env.GIT_BRANCH != 'origin/develop'
+                }
+            }
+            steps {
+                script {
+                    try {
+                        sh "./gradlew clean verifyMergeRequest -PMERGE_ID=$env.gitlabMergeRequestIid"
+                        updateGitlabCommitStatus name: 'check-for-rebase', state: 'success'
+                    } catch (exec) {
+                        // this is so we can capture the results in 'finally' below
+                        updateGitlabCommitStatus name: 'check-for-rebase', state: 'failed'
+                        throw exec
+                    }
+                }
+            }
+        }
+
+        stage('build') {
+            steps {
+                updateGitlabCommitStatus name: 'Building', state: 'running'
+                script {
+                    sh './gradlew clean build'
+                }
+            }
+        }
+
+        stage('unit-test') {
+            when {
+                expression {
+                    return env.GIT_BRANCH != 'origin/develop'
+                }
+            }
+            steps {
+                script {
+                    try {
+                        sh './gradlew test'
+                        updateGitlabCommitStatus name: 'unit test', state: 'success'
+                    } catch (exec) {
+                        updateGitlabCommitStatus name: 'unit test failed', state: 'failed'
+                        throw exec
+                    }
+                }
+            }
+        }
+        stage('integration-test') {
+            when {
+                expression {
+                    return env.GIT_BRANCH != 'origin/develop'
+                }
+            }
+            steps {
+                script {
+                    try {
+                        sh './gradlew integrationTest'
+                        updateGitlabCommitStatus name: 'integration test', state: 'success'
+                    } catch (exec) {
+                        // this is so we can capture the results in 'finally' below
+                        updateGitlabCommitStatus name: 'integration test failed', state: 'failed'
+                        throw exec
+                    }
+                }
+            }
+        }
+
+        stage('sonar') {
+            when {
+                expression {
+                    return env.GIT_BRANCH != 'origin/develop'
+                }
+            }
+            steps {
+                withSonarQubeEnv('Sonar_GCP') {
+                    sh './gradlew check jacocoTestReport sonar'
+                }
+            }
+        }
+        stage("sonar-qa") {
+            when {
+                expression {
+                    return env.GIT_BRANCH != 'origin/develop'
+
+                }
+            }
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    // sleep is only a temporary fix to a bug
+                    sleep(10)
+                    waitForQualityGate abortPipeline: true
+                }
+                updateGitlabCommitStatus name: 'sonar', state: 'success'
+            }
+        }
+
+        // Verify again that the feature branch is still not behind develop
+        stage('check-for-rebase-after') {
+            when {
+                expression {
+                    return env.GIT_BRANCH != 'origin/develop'
+                }
+            }
+            steps {
+                script {
+                    try {
+                        sh "./gradlew verifyMergeRequest -PMERGE_ID=$env.gitlabMergeRequestIid"
+                        updateGitlabCommitStatus name: 'check-for-rebase', state: 'success'
+                    } catch (exec) {
+                        // this is so we can capture the results in 'finally' below
+                        updateGitlabCommitStatus name: 'check-for-rebase', state: 'failed'
+                        throw exec
+                    }
+                }
+            }
+        }
+
+        stage("merge-code") {
+            when {
+                expression {
+                    return  env.GIT_BRANCH != 'origin/develop'
+                }
+            }
+            steps {
+                acceptGitLabMR()
+            }
+        }
+
+        stage('docker-build') {
+            when {
+                expression {
+                    return env.GIT_BRANCH == 'origin/develop'
+                }
+            }
+            steps {
+                script {
+                    try {
+                        // -P is for properties in gradle.properties
+                        // $ is for Jenkins env variables above
+                        sh './gradlew -PDOCKER_USERNAME=$ENV_DOCKER_USR -PDOCKER_PASSWORD=$ENV_DOCKER_PSW buildImage'
+                        updateGitlabCommitStatus name: 'docker-build', state: 'success'
+                    }
+                    catch (exec) {
+                        updateGitlabCommitStatus name: 'docker-build', state: 'failed'
+                        throw exec
+                    }
+                }
+            }
+        }
+        stage('docker-push') {
+            when {
+                expression {
+                  return env.GIT_BRANCH == 'origin/develop'
+                }
+            }
+            steps {
+                script {
+                    try {
+                        sh './gradlew -PDOCKER_USERNAME=$ENV_DOCKER_USR -PDOCKER_PASSWORD=$ENV_DOCKER_PSW pushImage'
+                        updateGitlabCommitStatus name: 'docker-push', state: 'success'
+                    } catch (exec) {
+                       updateGitlabCommitStatus name: 'docker-push', state: 'failed'
+                       throw exec
+                    }
+                }
+            }
+        }
+
+        stage('deploy-develop') {
+            when {
+                expression {
+                    return env.GIT_BRANCH == 'origin/develop'
+                }
+            }
+            steps {
+                // TODO: Please change the port (Ex:331010) to your own Application Port based on the GCP Port Assignment Excel Sheet.
+                // TODO: Please change ALL the names (there are 4) to be the same as DOCKER_PROJECT_NAME in gradle.properties.
+                 sh """ssh -T 34.70.108.213 'sudo docker rm -f CHANGEME_NAME;
+                 sudo docker pull enablementprojects/CHANGEME_NAME;
+                 sudo docker run --name CHANGEME_NAME -p CHANGEME_PORT:YOUR_APPLICATION_YML_PORT -d enablementprojects/CHANGEME_NAME'"""
+
+                updateGitlabCommitStatus name: 'docker-deploy', state: 'success'
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Cleans the workspace - so Jenkins will run fast and efficiently!
+            cleanWs()
+        }
+        success {
+            updateGitlabCommitStatus state: 'success'
+        }
+        failure {
+            updateGitlabCommitStatus state: 'failed'
+        }
+    }
+}

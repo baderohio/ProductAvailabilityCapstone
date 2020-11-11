@@ -1,0 +1,26 @@
+# This is where build.gradle variables are located
+ENV=DEV
+
+USERNAME=placeholder
+PASSWORD=placeholder
+
+# TODO: Change your app name (Ex: pgr-ui)
+AppName=CHANGEME
+
+GITLAB_URL=https://git.work.cognizant.studio
+API_TOKEN=nSVcMy4Ho7sdTiaDycvo
+# TODO: Change Project ID to your own project. Find it in Your Repo > Settings (Ex: 2210)
+PROJECT_ID=3779
+MERGE_ID=placeholder_value
+SONAR_URL=https://sonar.work.cognizant.studio
+NEXUS_URL=https://repository.work.cognizant.studio
+
+DOCKER_USERNAME=AUTO_REPLACED
+DOCKER_PASSWORD=AUTO_REPLACED
+DOCKER_EMAIL=baderwady@gmail.com
+DOCKER_URL=https://index.docker.io/v1/
+
+
+DOCKER_ORG=enablementprojects
+# TODO: Change your project name to your name-app name. It HAS to be unique and HAS to be lowercase. (Ex: kat-pgr-ui)
+DOCKER_PROJECT_NAME=product-availability-capstone
